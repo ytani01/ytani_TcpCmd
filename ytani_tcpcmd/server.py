@@ -3,13 +3,79 @@
 #
 import socketserver
 import sys
-import socket
 import threading
 import queue
-import json
 import time
 import click
 from .my_logger import get_logger
+
+
+class Worker(threading.Thread):
+    """ Worker """
+
+    __log = get_logger(__name__, False)
+
+    DEF_RECV_TIMEOUT = 0.2  # sec
+
+    def __init__(self, svr, debug=False):
+        self._dbg = debug
+        self.__log = get_logger(__class__.__name__, self._dbg)
+        self.__log.debug('')
+
+        self._svr = svr
+
+        self._cmdq = queue.Queue()
+        self._active = False
+
+        super().__init__(daemon=True)
+
+    def __del__(self):
+        """ __del__ """
+        self._active = False
+        self.__log.debug('')
+
+    def end(self):
+        """ end """
+        self.__log.debug('')
+        self._active = False
+        self.join()
+        self.__log.debug('done')
+
+    def send(self, cmd):
+        """ send """
+        self.__log.debug('cmd=%a', cmd)
+
+        self._cmdq.put(cmd)
+
+    def recv(self, timeout=DEF_RECV_TIMEOUT):
+        """ recv """
+        # self.__log.debug('timeout=%.1f', timeout)
+
+        try:
+            cmd = self._cmdq.get(timeout=timeout)
+        except queue.Empty:
+            cmd = ''
+        else:
+            self.__log.debug('cmd=%a', cmd)
+
+        return cmd
+
+    def run(self):
+        """ run """
+
+        self._active = True
+        while self._active:
+            cmd = self.recv()
+
+            if cmd == '':
+                time.sleep(0.1)
+                continue
+
+            self.__log.debug('cmd=%a', cmd)
+
+            time.sleep(3)
+
+        self.__log.debug('done')
 
 
 class Handler(socketserver.StreamRequestHandler):
@@ -17,15 +83,16 @@ class Handler(socketserver.StreamRequestHandler):
 
     __log = get_logger(__name__, False)
 
-    def __init__(self, request, client_address, server):
+    def __init__(self, request, client_address, svr):
         """ init """
-        self._dbg = server._dbg
+        self._dbg = svr._dbg
         self.__log = get_logger(__class__.__name__, self._dbg)
         self.__log.debug('client_address: %s', client_address)
 
-        self._svr = server
+        self._svr = svr
+        self._worker = self._svr._worker
 
-        return super().__init__(request, client_address, server)
+        return super().__init__(request, client_address, svr)
 
     def setup(self):
         """ setup """
@@ -42,10 +109,10 @@ class Handler(socketserver.StreamRequestHandler):
 
         try:
             self.wfile.write(msg)
-        except BrokenPipeError as e:
-            self.__log.debug('%s:%s', type(e).__name__, e)
-        except Exception as e:
-            self.__log.warning('%s:%s', type(e).__name__, e)
+        except BrokenPipeError as ex:
+            self.__log.debug('%s:%s', type(ex).__name__, ex)
+        except Exception as ex:
+            self.__log.warning('%s:%s', type(ex).__name__, ex)
 
     def handle(self):
         """ handle """
@@ -62,10 +129,11 @@ class Handler(socketserver.StreamRequestHandler):
         self.net_write('# Ready\r\n'.encode('utf-8'))
 
         net_data = b''
-        flag_continue = True
-        while flag_continue:
+
+        while self._svr._active:
             # データー受信
             try:
+                self.__log.debug('recv..')
                 net_data = self.request.recv(512)
             except ConnectionResetError as ex:
                 self.__log.warning('%s:%s.', type(ex), ex)
@@ -73,6 +141,9 @@ class Handler(socketserver.StreamRequestHandler):
             except BaseException as ex:
                 self.__log.warning('BaseException:%s:%s.', type(ex), ex)
                 # TBD
+                break
+            except Exception as ex:
+                self.__log.warning('Exception:%s:%s.', type(ex), ex)
                 break
             else:
                 self.__log.debug('net_data:%a', net_data)
@@ -86,7 +157,7 @@ class Handler(socketserver.StreamRequestHandler):
             else:
                 self.__log.debug('decoded_data:%a', decoded_data)
 
-            self.net_write('\r\n'.encode('utf-8'))
+            # self.net_write('\r\n'.encode('utf-8'))
 
             # 文字列抽出(コントロールキャラクター削除)
             data = ''
@@ -101,6 +172,8 @@ class Handler(socketserver.StreamRequestHandler):
                 self.__log.warning(msg)
                 self.net_write((msg + '\r\n').encode('utf-8'))
                 break
+
+            self._worker.send(data)
 
         self.__log.debug('done')
 
@@ -119,6 +192,11 @@ class Server(socketserver.ThreadingTCPServer):
 
         self._port = port
 
+        self._worker = Worker(svr=self, debug=self._dbg)
+        self._active = False
+
+        self.allow_reuse_address = True  # Important !!
+
         try:
             super().__init__(('', self._port), Handler)
         except Exception as ex:
@@ -126,19 +204,32 @@ class Server(socketserver.ThreadingTCPServer):
             sys.exit()
             # return None
 
-    def serve_forever(self):
+    def serve_forever(self, poll_interval=0.5):
         """  serve_forever """
         self.__log.debug('')
-        return super().serve_forever()
+        self._active = True
+        self._worker.start()
+        return super().serve_forever(poll_interval)
 
     def end(self):
         """ end """
         self.__log.debug('')
 
+        self._active = False
+        self.shutdown()
+        if self._worker._active:
+            self._worker.end()
+
         self.__log.debug('done')
 
-    def _del_(self):
+        # TBD
+        # 接続中の Handler を強制終了するためにこのようにしているが、
+        # もっといい方法がないのか?
+        raise KeyboardInterrupt  # TBD ??
+
+    def __del__(self):
         self.__log.debug('')
+        self._active = False
         self.end()
 
 
