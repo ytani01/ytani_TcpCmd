@@ -140,9 +140,6 @@ uninstall() {
 # main
 #
 cd_echo $MYDIR
-MY_VERSION=`python setup.py --version`
-echo "MY_VERSION=$MY_VERSION"
-echo
 
 while getopts fuh OPT; do
     case $OPT in
@@ -199,6 +196,10 @@ if [ -f $WRAPPER_SRC ]; then
         mkdir -pv $BUILD_DIR
         echo -n > $INSTALLED_FILE
     fi
+
+    MY_VERSION=`python setup.py --version`
+    echo "MY_VERSION=$MY_VERSION"
+    echo
 
     echo "### build $WRAPPER_SCRIPT"
     sed -e "s?%%% MY_PKG %%%?$MY_PKG?" \
