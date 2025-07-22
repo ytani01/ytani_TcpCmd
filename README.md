@@ -1,5 +1,8 @@
 # ytani_tcpcmd
 
+**deprecated**
+--> New: [tcp_command_svc](https://github.com/ytani01/tcp_command_svc)
+
 Tcp Command Server and Client Library for Python3
 
 ## 
