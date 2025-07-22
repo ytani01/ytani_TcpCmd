@@ -1,6 +1,6 @@
 # ytani_tcpcmd
 
-# **deprecated**
+# **DEPRECATED !!**
 
 --> New: [tcp_command_svc](https://github.com/ytani01/tcp_command_svc)
 
